@@ -84,6 +84,24 @@ def test_non_interactive_without_yes_refuses(tmp_path, monkeypatch):
     assert calls == []  # the installer must never run
 
 
+def test_eof_at_interactive_prompt_refuses_cleanly(tmp_path, monkeypatch):
+    """Closed stdin must not leak an EOFError traceback from the trust gate."""
+    bundle = _make_bundle(tmp_path)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda *a, **k: (_ for _ in ()).throw(EOFError),
+    )
+    calls = []
+    _patch_import_agent_bundle(monkeypatch, calls)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.handle_agent_import(_import_args(bundle, yes=False))
+
+    assert excinfo.value.code == 1
+    assert calls == []
+
+
 def test_non_interactive_without_yes_never_calls_input(tmp_path, monkeypatch):
     """A non-TTY refusal must not even attempt to read a prompt answer."""
     bundle = _make_bundle(tmp_path)

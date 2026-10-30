@@ -9033,7 +9033,15 @@ def handle_agent_import(args):
             print("Agents in bundle:")
             for aid in bundle_agent_ids:
                 print(f"  - {aid}")
-        answer = input("[y/N] Continue? ").strip().lower()
+        try:
+            answer = input("[y/N] Continue? ").strip().lower()
+        except EOFError:
+            print(
+                "Error: refusing to import non-interactively without --yes. "
+                "Re-run with --yes to confirm.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if answer not in ("y", "yes"):
             print("Import cancelled.")
             sys.exit(0)
