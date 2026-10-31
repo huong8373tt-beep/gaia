@@ -185,11 +185,16 @@ func (m ChatModel) skipLocalChatSetup() bool {
 func (m ChatModel) startSetupRun(firstBoot bool) (tea.Model, tea.Cmd) {
 	ch, cancel, err := gaiainit.Start(m.skipLocalChatSetup())
 	if err != nil {
+		hint := fmt.Sprintf(
+			"Run `%s` in a terminal instead.",
+			gaiainit.RunCommand(m.skipLocalChatSetup()),
+		)
+		if errors.Is(err, gaiainit.ErrNoCLI) {
+			hint = "Install the GAIA CLI first, then retry."
+		}
 		m.messages = append(m.messages, Message{
-			Role: RoleError,
-			Content: fmt.Sprintf(
-				"Could not start setup: %v\nRun `%s` in a terminal instead.",
-				err, gaiainit.RunCommand(m.skipLocalChatSetup())),
+			Role:    RoleError,
+			Content: fmt.Sprintf("Could not start setup: %v\n%s", err, hint),
 		})
 		m.updateViewport()
 		return m, m.releaseAfterSetupGate()
