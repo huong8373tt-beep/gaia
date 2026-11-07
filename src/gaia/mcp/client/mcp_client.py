@@ -590,14 +590,20 @@ class MCPClient:
 
         logger.debug(f"Fetching tools from MCP server '{self.name}'")
 
-        response = self.transport.send_request("tools/list")
+        try:
+            response = self.transport.send_request("tools/list")
+        except Exception as exc:
+            self.last_error = f"Tool listing failed for '{self.name}': {exc}"
+            logger.error(self.last_error)
+            return []
 
         if "error" in response:
             error = response["error"]
-            logger.error(
-                "Failed to list tools: %s",
-                self._redact(error.get("message", "Unknown")),
+            self.last_error = (
+                f"Tool listing failed for '{self.name}': "
+                f"{self._redact(error.get('message', 'Unknown'))!s}"
             )
+            logger.error(self.last_error)
             return []
 
         result = response.get("result", {})

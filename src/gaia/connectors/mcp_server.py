@@ -33,8 +33,11 @@ from gaia.connectors.errors import ConnectorsError
 from gaia.connectors.handler import register_handler
 from gaia.connectors.spec import ConnectorSpec
 from gaia.connectors.store import SERVICE_NAME
+from gaia.mcp.client.mcp_client import MCPClient
 
 logger = logging.getLogger(__name__)
+
+_MCP_TEST_TIMEOUT_S = 10
 
 
 def _mcp_servers_path() -> Path:
@@ -408,29 +411,57 @@ class McpServerHandler:
             )
 
     async def test(self, spec: ConnectorSpec) -> Dict[str, Any]:
+        """Start the configured server and verify that it lists its tools.
+
+        A keyring entry only proves that a value was saved; it does not prove
+        that the command exists, the token is accepted, or the MCP server can
+        complete its handshake. Use the same client path as an agent, with a
+        bounded timeout, and always tear the probe down before returning.
         """
-        Verify the connector by checking all required keyring entries exist.
+        try:
+            credential = await self.get_credential(spec)
+        except ConnectorsError as exc:
+            return {"ok": False, "detail": f"credential_check_failed: {exc}"}
 
-        Does NOT actually spawn the MCP server process — that would require
-        the real ``npx`` / command binary which may not be available in CI.
-        The presence of all keyring slots is treated as "configured and ready
-        to spawn".
-        """
-        if not spec.mcp_env_keys:
-            return {"ok": True, "detail": "no_secrets_required"}
+        client = None
+        try:
+            client = MCPClient.from_config(
+                spec.id,
+                {
+                    "command": credential["command"],
+                    "args": credential["args"],
+                    "env": credential["env"],
+                },
+                timeout=_MCP_TEST_TIMEOUT_S,
+            )
+            if not client.connect():
+                detail = (
+                    client.last_error or "the server did not complete its handshake"
+                )
+                return {"ok": False, "detail": f"server_start_failed: {detail}"}
 
-        missing: List[str] = []
-        for env_key in spec.mcp_env_keys:
-            if _saved_secret(spec, env_key) is None:
-                missing.append(env_key)
-
-        if missing:
+            client.list_tools(refresh=True)
+            if client.last_error:
+                return {
+                    "ok": False,
+                    "detail": f"tool_listing_failed: {client.last_error}",
+                }
+            tool_count = len(client.list_tools())
             return {
-                "ok": False,
-                "detail": f"missing keyring entries: {missing!r}",
+                "ok": True,
+                "detail": f"server_started_tools_listed: {tool_count}",
             }
-
-        return {"ok": True, "detail": "keyring_entries_present"}
+        except Exception as exc:  # surface a named, actionable health failure
+            logger.warning("MCP connector health check failed for %s: %s", spec.id, exc)
+            return {"ok": False, "detail": f"server_check_failed: {exc}"}
+        finally:
+            if client is not None:
+                try:
+                    client.disconnect()
+                except Exception as exc:  # cleanup must not hide the probe result
+                    logger.warning(
+                        "MCP connector cleanup failed for %s: %s", spec.id, exc
+                    )
 
 
 # Register the handler singleton at import time.

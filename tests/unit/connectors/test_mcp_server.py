@@ -12,8 +12,8 @@ Tests cover:
 - McpServerHandler.get_credential fails closed on missing keyring entry
 - McpServerHandler.disconnect removes entry from mcp_servers.json
 - McpServerHandler.disconnect deletes keyring entries
-- McpServerHandler.test returns ok=True when all keys present
-- McpServerHandler.test returns ok=False with detail on missing keys
+- McpServerHandler.test starts a server and lists its tools
+- McpServerHandler.test returns ok=False with named detail on credential/start failures
 - mcp_servers.json has no plaintext secrets after configure
 - MCPClient._resolve_keyring_refs resolves references
 - MCPClient._resolve_keyring_refs fails closed on missing entry
@@ -24,7 +24,7 @@ Tests cover:
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import keyring
 import pytest
@@ -258,20 +258,57 @@ class TestDisconnect:
 
 class TestHealthCheck:
     @pytest.mark.asyncio
-    async def test_ok_when_all_keys_present(self):
+    async def test_starts_server_and_lists_tools(self):
         spec = _make_spec()
         handler = McpServerHandler()
+        client = MagicMock()
+        client.connect.return_value = True
+        client.last_error = None
+        client.list_tools.return_value = [MagicMock(), MagicMock()]
 
-        with patch(
-            "gaia.connectors.mcp_server.keyring.get_password",
-            return_value="some-value",
+        with (
+            patch(
+                "gaia.connectors.mcp_server.keyring.get_password",
+                return_value="some-value",
+            ),
+            patch(
+                "gaia.connectors.mcp_server.MCPClient.from_config",
+                return_value=client,
+            ) as from_config,
         ):
             result = await handler.test(spec)
 
-        assert result["ok"] is True
+        assert result == {"ok": True, "detail": "server_started_tools_listed: 2"}
+        from_config.assert_called_once()
+        client.connect.assert_called_once()
+        client.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_fail_when_key_missing(self):
+    async def test_fail_loudly_when_server_does_not_start(self):
+        spec = _make_spec()
+        handler = McpServerHandler()
+        client = MagicMock()
+        client.connect.return_value = False
+        client.last_error = "server refused the token"
+
+        with (
+            patch(
+                "gaia.connectors.mcp_server.keyring.get_password",
+                return_value="some-value",
+            ),
+            patch(
+                "gaia.connectors.mcp_server.MCPClient.from_config",
+                return_value=client,
+            ),
+        ):
+            result = await handler.test(spec)
+
+        assert result["ok"] is False
+        assert result["detail"] == "server_start_failed: server refused the token"
+        client.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_fail_with_named_detail_when_key_missing(self):
         spec = _make_spec()
         handler = McpServerHandler()
 
@@ -282,15 +319,26 @@ class TestHealthCheck:
             result = await handler.test(spec)
 
         assert result["ok"] is False
+        assert result["detail"].startswith("credential_check_failed:")
         assert "GITHUB_TOKEN" in result["detail"]
 
     @pytest.mark.asyncio
     async def test_ok_when_no_keys_required(self):
         spec = _make_spec(mcp_env_keys=())
         handler = McpServerHandler()
-        result = await handler.test(spec)
+        client = MagicMock()
+        client.connect.return_value = True
+        client.last_error = None
+        client.list_tools.return_value = []
+
+        with patch(
+            "gaia.connectors.mcp_server.MCPClient.from_config",
+            return_value=client,
+        ):
+            result = await handler.test(spec)
+
         assert result["ok"] is True
-        assert result["detail"] == "no_secrets_required"
+        assert result["detail"] == "server_started_tools_listed: 0"
 
 
 # ---------------------------------------------------------------------------
