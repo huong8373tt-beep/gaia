@@ -98,5 +98,5 @@ def test_loaded_model_entry_carries_the_fields_callers_read(require_lemonade):
 
     assert client.slot_count(DEFAULT_MODEL_NAME) >= 2, (
         "The live loaded chat model reports fewer than two slots; side requests "
-        "would contend with the conversation slot."
+        f"would contend with the conversation slot. Got: {models}"
     )
