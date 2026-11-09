@@ -116,7 +116,10 @@ def _release_exists(repo: str, tag: str) -> bool:
         return True
     except ReleaseError as exc:
         text = str(exc).lower()
-        if "release not found" in text or "http 404" in text or "not found" in text:
+        # "repository not found" (and similar errors) is not proof that a
+        # release is missing. Only the release-specific gh response permits
+        # creating a new draft.
+        if "release not found" in text:
             return False
         raise
 
